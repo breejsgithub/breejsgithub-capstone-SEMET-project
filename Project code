@@ -1,0 +1,211 @@
+#Author: Breej Patel
+#Student# 
+#Description: Facial recognition door lock using OpenCV
+#Contact info:
+#	Breej Patel
+#	+1(647)-564 6971
+#	
+
+
+#Copyright Breej Patel 
+
+
+#Note this code may be used for demo purposes only
+
+#Note inorder to run this, face_trained.yml is required to run the recognizer
+
+############## Importing Libraries ################
+
+import numpy as np
+from imutils.video import VideoStream
+import cv2 as cv
+import os
+import imutils
+from datetime import datetime, timedelta
+import random
+import smtplib
+import RPi.GPIO as GPIO
+import time
+import drivers  # Assuming this is a custom driver module
+
+
+# Haar cascade for face detection
+haar_cascade = cv.CascadeClassifier('haar_face.xml')
+
+# List of people recognized by the system
+people = ['Andrea', 'Breej', 'Elon Musk']
+
+# LCD display driver setup
+display = drivers.Lcd()
+
+
+############### Assigning values and setting up GPIO pins ###############
+
+# Default access key
+key = "1234"
+
+# GPIO pin assignments
+relay = 11
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BOARD)
+GPIO.setup(relay, GPIO.OUT)
+GPIO.output(relay, GPIO.LOW)
+GPIO.setup(16, GPIO.OUT)
+GPIO.output(16, GPIO.LOW)
+GPIO.setup(18, GPIO.OUT)
+GPIO.output(18, GPIO.HIGH)
+GPIO.setup(22, GPIO.OUT)
+GPIO.output(22, GPIO.LOW)
+
+COL = [32,36,38,40]
+ROW = [29,31,33,35]
+
+# Setting up GPIO pins for keypad
+GPIO.setup(COL[0], GPIO.OUT)
+GPIO.setup(COL[1], GPIO.OUT)
+GPIO.setup(COL[2], GPIO.OUT)
+GPIO.setup(COL[3], GPIO.OUT)
+
+GPIO.setup(ROW[0], GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+GPIO.setup(ROW[1], GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+GPIO.setup(ROW[2], GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+GPIO.setup(ROW[3], GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+
+KeyPad = [ ["1","2","3","A"],
+           ["4","5","6","B"],
+           ["7","8","9","C"],
+           ["*","0","#","D"]]
+
+pressed = False
+
+# Loading trained face recognizer
+face_recognizer = cv.face.LBPHFaceRecognizer_create()
+face_recognizer.read('face_trained.yml')
+
+
+############   The main loop   #############
+while True:
+    recognized = False
+    KeyInput = ""
+    GPIO.output(COL[3], GPIO.HIGH)
+    display.lcd_display_string("Facial recog (A)", 1)
+    display.lcd_display_string("Key (B)", 2)
+    
+    ####### If either A or B is pressed #######
+    if GPIO.input(ROW[0]) == 1 or GPIO.input(ROW[1]) == 1:
+        ######  If A is Pressed ########
+        if GPIO.input(ROW[0]) == 1:
+            display.lcd_clear()
+            endtime = datetime.now() + timedelta(seconds=10)
+            
+            # Initializing camera
+            Cam = cv.VideoCapture(0)
+            while recognized == False:
+                ret, img = Cam.read()
+                display.lcd_display_string("Scanning face", 1)
+
+                gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+                
+                # Detecting faces
+                faces_rect = haar_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30,30), flags=cv.CASCADE_SCALE_IMAGE)
+                
+                for (x, y, w, h) in faces_rect:
+                    # Region of Interest for each face
+                    faces_roi = gray[y:y+h, x:x+h]
+                    
+                    # Recognizing the face
+                    label, confidence = face_recognizer.predict(faces_roi)
+                    
+                    # Checking if the face is recognized with sufficient confidence
+                    if (confidence <= 100 and confidence >= 50) or confidence == 0.0:
+                        cv.putText(img, str(people[label]), (20, 20), cv.FONT_HERSHEY_COMPLEX, 1.0, (0, 255, 0), thickness=2)
+                        cv.rectangle(img, (x, y), (x+w, y+h), (0, 255, 0), thickness=2)
+                        recognized = True
+                        print('Confidence ' + str(confidence))
+                    
+                    else:
+                        cv.putText(img, str("Not Recognized"), (20, 20), cv.FONT_HERSHEY_COMPLEX, 1.0, (0, 255, 0), thickness=2)
+                        cv.rectangle(img, (x, y), (x+w, y+h), (0, 255, 0), thickness=2)
+                        recognized = False
+            
+                # Breaking the loop if time limit for face recognition is reached
+                if datetime.now() > endtime:
+                    break
+            
+            # Releasing camera
+            Cam.release()
+        
+        ######  If B is pressed #######    
+        elif GPIO.input(ROW[1]) == 1:
+            display.lcd_clear()
+            display.lcd_display_string("Enter Key", 1)
+            userKey = ""
+            while True:
+                if pressed == True:
+                    break
+                for i in range(4):
+                    GPIO.output(COL[i], 1)
+                    if pressed == True:
+                        break
+                    else:
+                        for x in range(4):
+                            if i == 3:
+                                if GPIO.input(ROW[3]) == 1:
+                                    pressed = True
+                                    break
+                            if i == 3:
+                                if GPIO.input(ROW[2]) == 1:
+                                    display.lcd_clear()
+                                    display.lcd_display_string("Enter Key", 1)
+                                    z = len(userKey) - 1
+                                    userKey = userKey.replace(userKey[z], "")
+                                    display.lcd_display_string(userKey, 2)
+                                    while GPIO.input(ROW[2]) == 1:
+                                        pass
+                            elif GPIO.input(ROW[x]) == 1:
+                                userKey = userKey + KeyPad[x][i]
+                                display.lcd_display_string(userKey, 2)
+                                while GPIO.input(ROW[x]) == 1:
+                                    pass
+                                     
+                    GPIO.output(COL[i], 0)
+                
+            if userKey == key:
+                recognized = True
+            else:
+                recognized = False
+    
+        if recognized == True:
+            pressed = False
+            display.lcd_clear()
+            print("Recognized")
+            display.lcd_display_string("Door unlocked", 1)
+            
+            # Unlocking the door
+            GPIO.output(relay, GPIO.HIGH)
+            GPIO.output(18, GPIO.LOW)
+            GPIO.output(16, GPIO.HIGH)
+            time.sleep(5)
+            
+            # Locking the door after a delay
+            GPIO.output(relay, GPIO.LOW)
+            GPIO.output(18, GPIO.HIGH)
+            GPIO.output(16, GPIO.LOW)
+    
+        elif recognized == False:
+            pressed = False
+            display.lcd_clear()
+            print("Not recognized")
+            display.lcd_display_string("Door locked", 1)
+            x = 0
+            while True:
+                # Blinking LEDs to indicate failed recognition
+                GPIO.output(18, True)
+                GPIO.output(22, True)
+                time.sleep(0.3)
+                GPIO.output(18, False)
+                GPIO.output(22, False)
+                time.sleep(0.3)
+                x += 1
+                if x == 3:
+                    break
